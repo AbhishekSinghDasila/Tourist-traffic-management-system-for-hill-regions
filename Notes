@@ -1,0 +1,73 @@
+FastAPI wins for you, and here's the actual reasoning rather than just a default recommendation. Your ML service (XGBoost crowd prediction, EasyOCR) is Python-native — if your backend is also Python, you share one language across the entire stack, one dependency ecosystem, and you can literally import the same Pydantic models between services.
+
+steps::
+1>— Open the project folder in your terminal # Navigate to the extracted folder
+cd path/to/devbhumi
+
+        # On Windows (using Git Bash or PowerShell):
+        cd C:\Users\YourName\Downloads\devbhumi
+
+        # Verify you are in the right place
+        ls    # Mac/Linux
+        dir   # Windows cmd
+        # You should see: docker-compose.yml  .env.example  services/  etc.
+
+    Step 2 — Create your .env file
+        The .env file holds all passwords and secrets. It is gitignored — it will never be committed to git. This is intentional and important for security.
+
+        # Copy the template
+        cp .env.example .env
+
+        # Now open .env in any text editor and change these values:
+        # POSTGRES_PASSWORD=change_me_strong_password  →  use any strong password
+        # AUTH_DB_PASSWORD=change_me_auth_password     →  use a different strong password
+        #
+        # Also update this line to match AUTH_DB_PASSWORD:
+        # AUTH_DATABASE_URL=postgresql://auth_svc:change_me_auth_password@postgres:5432/devbhumi
+        #                                          ↑ this must match AUTH_DB_PASSWORD
+
+        💡 Why two separate passwords?
+        POSTGRES_PASSWORD is for the admin account (devbhumi_admin) that can do anything in the database. AUTH_DB_PASSWORD is for the restricted auth_svc user that can only read/write the users table. Even if the auth-service container is compromised, the attacker cannot access complaint data, booking data, or other tables.
+
+
+    Step 3 — Generate JWT signing keys
+        JWT tokens are signed with an RSA private key and verified with the corresponding public key. We use asymmetric cryptography (RS256) so other services can verify tokens without ever holding the signing key.
+
+        # Mac / Linux
+        chmod +x scripts/generate_jwt_keys.sh
+        ./scripts/generate_jwt_keys.sh
+
+        # Windows (Git Bash)
+        bash scripts/generate_jwt_keys.sh
+
+        # Expected output:
+        # Generated:
+        #   secrets/jwt_private_key.pem  (keep secret — auth-service only)
+        #   secrets/jwt_public_key.pem   (can be shared for verification)
+
+        # Verify the files exist:
+        ls secrets/
+        # jwt_private_key.pem  jwt_public_key.pem
+
+        🔐 Never commit the secrets/ folder
+        The .gitignore file already excludes the secrets/ folder. These PEM files are mounted into the Docker container at runtime as Docker secrets — they are never baked into the container image. If you ever rotate these keys, all existing JWT tokens become invalid and users will need to log in again.
+
+
+    Step 4 — Start all containers
+        This single command builds the auth-service Docker image and starts all 5 containers: Postgres, Redis, Zookeeper, Kafka, and auth-service.
+
+        docker compose up -d --build
+
+        # --build   forces rebuild of the auth-service image
+        # -d        runs in detached mode (background)
+
+        # This will take 3-5 minutes on first run as Docker pulls images.
+        # On subsequent runs it takes 20-30 seconds.
+
+        # Watch the output for any ERROR lines.
+        # Kafka and Zookeeper take the longest to start — this is normal.
+
+        Verify: Check all containers are healthy
+        docker compose ps
+
+        # Expected output (all should show 'healthy' or 'running'):
