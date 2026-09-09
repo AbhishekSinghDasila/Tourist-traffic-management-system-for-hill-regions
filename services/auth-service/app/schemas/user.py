@@ -70,15 +70,10 @@ class UserPublic(BaseModel):
     email: Optional[EmailStr] = None
     role: str
     district: Optional[str] = None
+    station_id: Optional[str] = None  # police only
 
     class Config:
         from_attributes = True
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
 
 
 class AccessTokenResponse(BaseModel):

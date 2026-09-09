@@ -38,6 +38,7 @@ def trigger_alert(
     """
     alert = dispatch_alert(
         triggered_by=current_user.user_id,
+        triggered_role=current_user.role,
         alert_type=payload.alert_type,
         description=payload.description,
         lat=payload.lat,

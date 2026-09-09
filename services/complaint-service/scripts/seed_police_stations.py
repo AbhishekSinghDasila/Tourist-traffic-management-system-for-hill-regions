@@ -3,7 +3,7 @@ Seeds the police_stations table with real police stations
 in Uttarakhand and Himachal Pradesh tourist areas.
 
 Usage:
-  docker compose -f docker-compose.dev.yml exec complaint-service python -m scripts.seed_police_stations
+  docker compose exec complaint-service python -m scripts.seed_police_stations
 """
 import sys
 sys.path.insert(0, ".")

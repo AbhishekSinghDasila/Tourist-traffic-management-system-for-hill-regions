@@ -27,6 +27,10 @@ router = APIRouter(prefix="/api/v1/predict", tags=["crowd prediction"])
 def _features_from_date(target_date: date, weather: float) -> dict:
     """Extract all model features from a date."""
     dow = target_date.weekday()   # 0=Monday, 6=Sunday
+    # Clamp to [0, 10] — the range the model was trained on. The POST schema
+    # already clamps via its validator, but the GET query-param endpoints
+    # below don't go through that schema, so clamp here too.
+    weather = max(0.0, min(10.0, weather))
     return {
         "month":          target_date.month,
         "day_of_week":    dow,
@@ -54,6 +58,40 @@ def _make_prediction(district: str, target_date: date, weather: float) -> Predic
     )
 
 
+@router.get("/crowd/all", response_model=BatchPredictionResponse)
+def predict_all_districts(weather: float = 7.0):
+    """
+    Predict crowd for ALL districts today.
+    Powers the risk overlay on the traffic map.
+    Returns RED districts separately for map highlighting.
+    """
+    if not predictor.is_ready:
+        raise HTTPException(status_code=503, detail={"error_code": "MODEL_NOT_READY"})
+
+    today = datetime.now(timezone.utc).date()
+    predictions = []
+    high_risk = []
+
+    for district in DISTRICTS.keys():
+        pred = _make_prediction(district, today, weather)
+        predictions.append(pred)
+        if pred.risk_level == "RED":
+            high_risk.append(district)
+
+    # Sort by capacity_pct descending — highest risk first
+    predictions.sort(key=lambda p: p.capacity_pct, reverse=True)
+
+    return BatchPredictionResponse(
+        predictions=predictions,
+        total_districts=len(predictions),
+        high_risk_districts=high_risk,
+    )
+
+
+# NOTE: this route must stay registered AFTER "/crowd/all" — FastAPI/Starlette
+# matches routes in registration order, and "/crowd/{district}" would
+# otherwise swallow requests to "/crowd/all" (matching district="all") and
+# 404 them before this dedicated route ever gets a chance to run.
 @router.get("/crowd/{district}", response_model=PredictionResponse)
 def predict_district_today(district: str, weather: float = 7.0):
     """
@@ -92,36 +130,6 @@ def predict_custom(payload: PredictionRequest):
 
     target_date = payload.target_date or datetime.now(timezone.utc).date()
     return _make_prediction(payload.district.lower(), target_date, payload.weather_score)
-
-
-@router.get("/crowd/all", response_model=BatchPredictionResponse)
-def predict_all_districts(weather: float = 7.0):
-    """
-    Predict crowd for ALL districts today.
-    Powers the risk overlay on the traffic map.
-    Returns RED districts separately for map highlighting.
-    """
-    if not predictor.is_ready:
-        raise HTTPException(status_code=503, detail={"error_code": "MODEL_NOT_READY"})
-
-    today = datetime.now(timezone.utc).date()
-    predictions = []
-    high_risk = []
-
-    for district in DISTRICTS.keys():
-        pred = _make_prediction(district, today, weather)
-        predictions.append(pred)
-        if pred.risk_level == "RED":
-            high_risk.append(district)
-
-    # Sort by capacity_pct descending — highest risk first
-    predictions.sort(key=lambda p: p.capacity_pct, reverse=True)
-
-    return BatchPredictionResponse(
-        predictions=predictions,
-        total_districts=len(predictions),
-        high_risk_districts=high_risk,
-    )
 
 
 @router.get("/model/info", response_model=ModelInfoResponse)

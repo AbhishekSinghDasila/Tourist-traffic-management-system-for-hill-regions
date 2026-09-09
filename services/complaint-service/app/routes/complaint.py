@@ -11,13 +11,14 @@ GET  /api/v1/complaints/{id}/image-url    admin — generate presigned S3 URL
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_role, TokenUser
 from app.repositories.complaint_repository import PostgresComplaintRepository
 from app.schemas.complaint import (
-    ComplaintPublic, ComplaintPoliceView, ComplaintAdminView, StatusUpdate
+    ComplaintCreate, ComplaintPublic, ComplaintPoliceView, ComplaintAdminView, StatusUpdate
 )
 from app.services.complaint_service import ComplaintService
 from app.services.storage_service import generate_presigned_url
@@ -61,15 +62,29 @@ async def submit_complaint(
             detail={"error_code": "EMPTY_FILE", "message": "Image file is empty"},
         )
 
-    svc = _get_service(db)
     try:
-        complaint = svc.submit_complaint(
-            user_id=UUID(current_user.user_id),
+        validated = ComplaintCreate(
             category=category,
             description=description,
             lat=lat,
             lng=lng,
             district=district,
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "INVALID_INPUT", "message": str(e)},
+        )
+
+    svc = _get_service(db)
+    try:
+        complaint = svc.submit_complaint(
+            user_id=UUID(current_user.user_id),
+            category=validated.category,
+            description=validated.description,
+            lat=validated.lat,
+            lng=validated.lng,
+            district=validated.district,
             image_bytes=image_bytes,
         )
     except ValueError as e:
@@ -122,7 +137,7 @@ def get_station_complaints(
         )
 
     station = (db.query(PoliceStation)
-               .filter(PoliceStation.district == current_user.district)
+               .filter(PoliceStation.district == current_user.district.lower())
                .filter(PoliceStation.is_active == True)  # noqa: E712
                .first())
 

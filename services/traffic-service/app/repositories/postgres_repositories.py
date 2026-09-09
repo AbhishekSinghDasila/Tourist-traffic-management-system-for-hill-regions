@@ -10,7 +10,7 @@ from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import func, case
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models.checkpoint import Checkpoint
 from app.models.vehicle import Vehicle
@@ -154,13 +154,29 @@ class PostgresTrafficEntryRepository(ITrafficEntryRepository):
         Blueprint edge case 4.3: vehicles that entered but never exited.
         Marks their ENTRY records as TIMED_OUT after 18 hours.
         Called by the scheduler every 6 hours.
+
+        Only entries with NO matching EXIT afterwards are marked. A
+        vehicle that entered and later exited normally (even after
+        `older_than_hours`, e.g. a multi-day stay) must NOT have its
+        ENTRY flipped to TIMED_OUT — doing so would drop its +1 from
+        the active count while the EXIT's -1 still applies, silently
+        undercounting the district's active vehicles.
         """
         cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+        exit_entry = aliased(TrafficEntry)
+        has_later_exit = (
+            self.db.query(exit_entry.id)
+            .filter(exit_entry.vehicle_id == TrafficEntry.vehicle_id)
+            .filter(exit_entry.direction == DIRECTION_EXIT)
+            .filter(exit_entry.recorded_at > TrafficEntry.recorded_at)
+            .exists()
+        )
         updated = (
             self.db.query(TrafficEntry)
             .filter(TrafficEntry.direction == DIRECTION_ENTRY)
             .filter(TrafficEntry.status == STATUS_ACTIVE)
             .filter(TrafficEntry.recorded_at < cutoff)
+            .filter(~has_later_exit)
             .all()
         )
         count = len(updated)

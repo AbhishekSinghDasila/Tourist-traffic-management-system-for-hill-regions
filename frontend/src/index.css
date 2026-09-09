@@ -1,0 +1,22 @@
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}
+
+/* Leaflet's default marker icon assets are broken by bundlers unless
+   patched in code (see lib/leafletIcons.ts). This just keeps the
+   attribution control from overlapping our own UI awkwardly on mobile. */
+.leaflet-control-attribution {
+  font-size: 10px !important;
+}

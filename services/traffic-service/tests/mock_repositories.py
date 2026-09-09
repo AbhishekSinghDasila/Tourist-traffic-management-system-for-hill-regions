@@ -88,9 +88,10 @@ class MockTrafficEntryRepository(ITrafficEntryRepository):
         return entry
 
     def count_active_by_district(self, district: str) -> int:
-        # Needs checkpoint lookup — not available here.
-        # Tests that need this use count_active_all_districts instead.
-        raise NotImplementedError("Use count_active_all_districts in mock")
+        # Mirrors count_active_all_districts but scoped to one district.
+        # Requires set_checkpoint_district_map() to have been called in
+        # test setup, same as count_active_all_districts.
+        return self.count_active_all_districts().get(district.lower(), 0)
 
     def count_active_all_districts(self) -> dict[str, int]:
         # Build district→net_count from stored entries + checkpoint district
@@ -106,13 +107,26 @@ class MockTrafficEntryRepository(ITrafficEntryRepository):
         return counts
 
     def mark_timed_out(self, older_than_hours: int = 18) -> int:
+        # Mirrors PostgresTrafficEntryRepository.mark_timed_out: only
+        # entries with no later matching EXIT for the same vehicle are
+        # timed out. A vehicle that entered and later exited normally
+        # (even after `older_than_hours`) must keep its ENTRY ACTIVE,
+        # otherwise the district count would be undercounted.
         from datetime import timedelta
         cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
         count = 0
         for entry in self._entries:
-            if (entry.direction == DIRECTION_ENTRY
+            if not (entry.direction == DIRECTION_ENTRY
                     and entry.status == STATUS_ACTIVE
                     and entry.recorded_at < cutoff):
+                continue
+            has_later_exit = any(
+                other.vehicle_id == entry.vehicle_id
+                and other.direction == DIRECTION_EXIT
+                and other.recorded_at > entry.recorded_at
+                for other in self._entries
+            )
+            if not has_later_exit:
                 entry.status = STATUS_TIMED_OUT
                 count += 1
         return count

@@ -2,7 +2,7 @@
 Train the XGBoost crowd prediction model and save artifacts.
 
 Run this ONCE after the ml-service container starts:
-  docker compose -f docker-compose.dev.yml exec ml-service python -m scripts.train_model
+  docker compose exec ml-service python -m scripts.train_model
 
 Training takes ~30 seconds on CPU.
 After training, the model is available at /app/model_artifacts/.

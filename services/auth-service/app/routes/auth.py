@@ -10,11 +10,12 @@ Edge cases handled here, per the blueprint section 4.1:
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user, oauth2_scheme
 from app.core.security import (
@@ -27,9 +28,29 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.repositories.postgres_user_repository import PostgresUserRepository
-from app.schemas.user import UserRegister, UserPublic, TokenResponse, AccessTokenResponse
+from app.schemas.user import UserRegister, UserPublic, AccessTokenResponse
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
+
+# The refresh token never needs to be readable by frontend JS — it only
+# ever needs to travel back to these two auth routes. HttpOnly means an
+# XSS bug elsewhere in the frontend can't exfiltrate it; scoping the
+# cookie path here (rather than "/") means the browser doesn't attach it
+# to every other service's requests either.
+REFRESH_COOKIE_NAME = "refresh_token"
+REFRESH_COOKIE_PATH = "/api/v1/auth"
+
+
+def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    response.set_cookie(
+        key=REFRESH_COOKIE_NAME,
+        value=refresh_token,
+        httponly=True,
+        secure=settings.ENVIRONMENT != "development",
+        samesite="lax",
+        max_age=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60,
+        path=REFRESH_COOKIE_PATH,
+    )
 
 
 @router.post("/register", response_model=UserPublic, status_code=status.HTTP_201_CREATED)
@@ -55,8 +76,8 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
     return created
 
 
-@router.post("/login", response_model=TokenResponse)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+@router.post("/login", response_model=AccessTokenResponse)
+def login(response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     repo = PostgresUserRepository(db)
 
     # form_data.username carries the phone number (OAuth2 form spec
@@ -81,19 +102,28 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 
     access_token, _ = create_access_token(str(user.id), user.role, user.district)
     refresh_token, _ = create_refresh_token(str(user.id), user.role, user.district)
+    _set_refresh_cookie(response, refresh_token)
 
-    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+    return AccessTokenResponse(access_token=access_token)
 
 
 @router.post("/refresh", response_model=AccessTokenResponse)
-def refresh(refresh_token: str, db: Session = Depends(get_db)):
+def refresh(
+    response: Response,
+    db: Session = Depends(get_db),
+    refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+):
+    no_cookie = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail={"error_code": "SESSION_EXPIRED", "message": "Refresh token is invalid or expired. Please log in again."},
+    )
+    if refresh_token is None:
+        raise no_cookie
+
     try:
         payload = decode_token(refresh_token)
     except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={"error_code": "SESSION_EXPIRED", "message": "Refresh token is invalid or expired. Please log in again."},
-        )
+        raise no_cookie
 
     if payload.get("type") != "refresh":
         raise HTTPException(
@@ -127,18 +157,29 @@ def refresh(refresh_token: str, db: Session = Depends(get_db)):
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(token: str = Depends(oauth2_scheme)):
-    try:
-        payload = decode_token(token)
-    except JWTError:
-        # Token is already invalid/expired — nothing to blacklist, treat as success
-        return
+def logout(
+    response: Response,
+    token: str = Depends(oauth2_scheme),
+    refresh_token: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
+):
+    # Blacklist both tokens for this session — not just the short-lived
+    # access token. Without blacklisting the refresh token too, "logout"
+    # would only last 15 minutes: the refresh cookie could still mint a
+    # fresh access token for up to its full 7-day life.
+    for t in (token, refresh_token):
+        if not t:
+            continue
+        try:
+            payload = decode_token(t)
+        except JWTError:
+            continue
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        if jti and exp:
+            remaining_ttl = int(exp - datetime.now(timezone.utc).timestamp())
+            blacklist_token(jti, remaining_ttl)
 
-    jti = payload.get("jti")
-    exp = payload.get("exp")
-    if jti and exp:
-        remaining_ttl = int(exp - datetime.now(timezone.utc).timestamp())
-        blacklist_token(jti, remaining_ttl)
+    response.delete_cookie(key=REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
 
 
 @router.get("/me", response_model=UserPublic)

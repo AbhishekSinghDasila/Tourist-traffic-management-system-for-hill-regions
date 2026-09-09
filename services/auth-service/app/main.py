@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pythonjsonlogger import jsonlogger
 
 from app.core.config import settings
-from app.routes import auth, demo
+from app.routes import auth
 
 # ---------- Structured logging setup ----------
 logHandler = logging.StreamHandler()
@@ -42,7 +42,6 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
-app.include_router(demo.router)
 
 
 @app.get("/health")

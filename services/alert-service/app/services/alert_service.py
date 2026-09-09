@@ -12,7 +12,7 @@ Flow:
 import json
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -25,6 +25,12 @@ from app.services.notification_service import get_notifier
 
 logger = logging.getLogger("alert-service.dispatch")
 
+# Blueprint edge case 4.4: "User location not available for proximity check
+# -> skip that user." The Redis path is naturally bounded to this (locations
+# are written with a 1hr TTL — see update_user_location), but the Postgres
+# fallback has no TTL, so it needs the same cutoff applied explicitly.
+LOCATION_STALENESS_HOURS = 2
+
 
 def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     R = 6371.0
@@ -36,10 +42,17 @@ def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return R * 2 * math.asin(math.sqrt(a))
 
 
-def _find_nearby_users(alert_lat: float, alert_lng: float, radius_km: float, db: Session) -> list[str]:
+def _find_nearby_users(
+    alert_lat: float,
+    alert_lng: float,
+    radius_km: float,
+    db: Session,
+    exclude_user_id: Optional[str] = None,
+) -> list[str]:
     """
     Finds user_ids within radius_km of alert location.
     Redis first (fast), Postgres fallback if Redis empty.
+    Excludes exclude_user_id (the alert triggerer) from the results either way.
     """
     nearby = []
 
@@ -55,19 +68,26 @@ def _find_nearby_users(alert_lat: float, alert_lng: float, radius_km: float, db:
                 dist = _haversine_km(alert_lat, alert_lng, loc["lat"], loc["lng"])
                 if dist <= radius_km:
                     user_id = key.replace("loc:", "")
-                    nearby.append(user_id)
+                    if user_id != exclude_user_id:
+                        nearby.append(user_id)
             except (json.JSONDecodeError, KeyError):
                 continue
         if cursor == 0:
             break
 
-    # DB fallback if Redis had nothing
+    # DB fallback if Redis had nothing. Redis entries are always <= 1hr old
+    # (see update_user_location's TTL), but Postgres rows never expire on
+    # their own, so the staleness cutoff has to be applied here explicitly.
     if not nearby:
-        db_locations = db.query(UserLocation).all()
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=LOCATION_STALENESS_HOURS)
+        db_locations = db.query(UserLocation).filter(UserLocation.updated_at >= cutoff).all()
         for loc in db_locations:
+            user_id = str(loc.user_id)
+            if user_id == exclude_user_id:
+                continue
             dist = _haversine_km(alert_lat, alert_lng, loc.lat, loc.lng)
             if dist <= radius_km:
-                nearby.append(str(loc.user_id))
+                nearby.append(user_id)
 
     logger.info(f"Found {len(nearby)} users within {radius_km}km of alert")
     return nearby
@@ -91,6 +111,7 @@ def update_user_location(user_id: str, lat: float, lng: float, district: Optiona
 
 def dispatch_alert(
     triggered_by: str,
+    triggered_role: str,
     alert_type: str,
     description: Optional[str],
     lat: float,
@@ -102,12 +123,15 @@ def dispatch_alert(
     """Full alert dispatch — creates alert, finds users, sends notifications."""
 
     # Step 1: Create alert record
+    # district is lowercased at write time to match the case-insensitive
+    # lookup in GET /api/v1/alerts?district=... (which lowercases its filter).
     alert = EmergencyAlert(
         triggered_by=UUID(triggered_by),
+        triggered_role=triggered_role,
         alert_type=alert_type,
         description=description,
         lat=lat, lng=lng,
-        district=district,
+        district=district.lower() if district else district,
         radius_km=radius_km,
         status="ACTIVE",
     )
@@ -125,8 +149,8 @@ def dispatch_alert(
     data  = {"alert_id": str(alert.id), "alert_type": alert_type,
              "lat": str(lat), "lng": str(lng)}
 
-    # Step 2: Notify nearby users
-    for user_id in _find_nearby_users(lat, lng, radius_km, db):
+    # Step 2: Notify nearby users (excluding whoever triggered the alert)
+    for user_id in _find_nearby_users(lat, lng, radius_km, db, exclude_user_id=triggered_by):
         success = notifier.send_to_user(user_id, title, body, data)
         db.add(AlertRecipient(
             alert_id=alert.id,
@@ -134,7 +158,7 @@ def dispatch_alert(
             recipient_id=user_id,
             channel="PUSH" if settings.USE_FCM else "CONSOLE",
             delivery_status="DELIVERED" if success else "FAILED",
-            delivered_at=datetime.now(timezone.utc) if success else None,
+            sent_at=datetime.now(timezone.utc) if success else None,
         ))
         recipients_created += 1
 
@@ -153,12 +177,12 @@ def dispatch_alert(
             recipient_id=topic,
             channel="PUSH" if settings.USE_FCM else "CONSOLE",
             delivery_status="DELIVERED" if count > 0 else "PENDING",
-            delivered_at=datetime.now(timezone.utc) if count > 0 else None,
+            sent_at=datetime.now(timezone.utc) if count > 0 else None,
         ))
         recipients_created += 1
 
     # Step 4: Update recipient count
-    alert.recipient_count = recipients_created
+    alert.recipients_notified = recipients_created
     db.commit()
     db.refresh(alert)
 

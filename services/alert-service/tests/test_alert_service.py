@@ -60,7 +60,8 @@ def test_find_nearby_users_empty_redis_falls_back_to_db():
     mock_location.lng = 79.454
 
     mock_db = MagicMock()
-    mock_db.query.return_value.all.return_value = [mock_location]
+    # DB fallback filters by staleness before .all() — see LOCATION_STALENESS_HOURS.
+    mock_db.query.return_value.filter.return_value.all.return_value = [mock_location]
 
     with patch("app.services.alert_service.redis_client", mock_redis):
         result = _find_nearby_users(29.3919, 79.4542, 2.0, mock_db)
@@ -71,12 +72,46 @@ def test_find_nearby_users_zero_in_radius():
     mock_redis = MagicMock()
     mock_redis.scan.return_value = (0, [])
     mock_db = MagicMock()
-    mock_db.query.return_value.all.return_value = []
+    mock_db.query.return_value.filter.return_value.all.return_value = []
 
     with patch("app.services.alert_service.redis_client", mock_redis):
         result = _find_nearby_users(29.39, 79.45, 2.0, mock_db)
 
     assert result == []
+
+def test_find_nearby_users_excludes_triggering_user():
+    """Blueprint edge case: the alert triggerer shouldn't be notified of their own alert."""
+    user_id = str(uuid.uuid4())
+    near_loc = json.dumps({"lat": 29.3989, "lng": 79.4542})
+
+    mock_redis = MagicMock()
+    mock_redis.scan.return_value = (0, [f"loc:{user_id}"])
+    mock_redis.get.return_value = near_loc
+
+    mock_db = MagicMock()
+
+    with patch("app.services.alert_service.redis_client", mock_redis):
+        result = _find_nearby_users(29.3919, 79.4542, 2.0, mock_db, exclude_user_id=user_id)
+
+    assert result == []
+
+def test_find_nearby_users_db_fallback_excludes_stale_locations():
+    """Postgres locations have no TTL (unlike Redis's 1hr TTL), so the
+    staleness cutoff must be applied in the query itself, not just trusted."""
+    mock_redis = MagicMock()
+    mock_redis.scan.return_value = (0, [])
+
+    mock_db = MagicMock()
+    # A correct implementation filters stale rows out in the query — so
+    # from this mock's perspective, .filter(...).all() returning [] is
+    # exactly what "no fresh locations nearby" looks like.
+    mock_db.query.return_value.filter.return_value.all.return_value = []
+
+    with patch("app.services.alert_service.redis_client", mock_redis):
+        result = _find_nearby_users(29.3919, 79.4542, 2.0, mock_db)
+
+    assert result == []
+    mock_db.query.return_value.filter.assert_called_once()
 
 def test_console_notifier_send_to_user_returns_true():
     notifier = ConsolePushNotifier()

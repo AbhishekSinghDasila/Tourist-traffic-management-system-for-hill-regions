@@ -46,7 +46,7 @@ DISTRICT_CAPACITIES = {
 
 
 def _risk_level(percentage: float) -> str:
-    if percentage >= 85:
+    if percentage > 85:
         return "RED"
     if percentage >= 60:
         return "AMBER"

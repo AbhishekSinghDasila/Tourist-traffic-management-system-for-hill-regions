@@ -11,6 +11,9 @@ python-json-logger==2.0.7
 python-multipart==0.0.9
 boto3==1.34.69
 easyocr==1.7.1
+# python-bidi 0.6.x renamed/changed get_display's signature, which breaks
+# easyocr==1.7.1's import of it — pin to the last version known compatible.
+python-bidi==0.4.2
 Pillow==10.3.0
 geopy==2.4.1
-aiokafka==0.10.0
+kafka-python==2.0.2

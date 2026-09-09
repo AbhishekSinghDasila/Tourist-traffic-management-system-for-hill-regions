@@ -119,8 +119,25 @@ class XGBoostPredictor:
                 logger.warning(f"Model not found at {settings.model_path}. Run train script first.")
                 return False
 
-            self._model   = joblib.load(settings.model_path)
-            self._encoder = joblib.load(settings.encoder_path)
+            model = joblib.load(settings.model_path)
+            encoder = joblib.load(settings.encoder_path)
+            feature_names = joblib.load(settings.feature_names_path)
+
+            # Guard against training/inference schema drift: the feature vector
+            # built in predict() below is ordered per FEATURE_COLUMNS. If the
+            # saved artifact was trained against a different feature set/order,
+            # silently loading it would produce garbage predictions instead of
+            # a clear error.
+            if list(feature_names) != FEATURE_COLUMNS:
+                logger.error(
+                    "Feature name/order mismatch between saved artifact and "
+                    f"code. artifact={list(feature_names)} code={FEATURE_COLUMNS}. "
+                    "Refusing to load stale/incompatible model."
+                )
+                return False
+
+            self._model   = model
+            self._encoder = encoder
             self._ready   = True
             logger.info("XGBoost model loaded successfully")
             return True

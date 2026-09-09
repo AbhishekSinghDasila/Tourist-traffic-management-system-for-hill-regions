@@ -24,7 +24,7 @@ from app.schemas.traffic import (
     TrafficEntryCreate, TrafficEntryPublic,
     DistrictDensity, DensityListResponse,
 )
-from app.services.density_service import TrafficDensityService
+from app.services.density_service import TrafficDensityService, _cache_key_district
 
 router = APIRouter(prefix="/api/v1/traffic", tags=["traffic"])
 
@@ -75,8 +75,11 @@ def record_vehicle_entry(
     vehicle = vehicle_repo.upsert(payload.plate_number, None)
     entry   = entry_repo.create(vehicle.id, checkpoint.id, payload.direction)
 
-    # Invalidate Redis cache — next density read will reflect this vehicle
-    redis_client.delete(f"tourist_count:{checkpoint.district}")
+    # Invalidate Redis cache — next density read will reflect this vehicle.
+    # Must use the same key format the read path uses (lower-cased district),
+    # otherwise a mixed-case district value would leave the stale cache entry
+    # in place and the density read would keep serving stale counts.
+    redis_client.delete(_cache_key_district(checkpoint.district))
 
     return entry
 

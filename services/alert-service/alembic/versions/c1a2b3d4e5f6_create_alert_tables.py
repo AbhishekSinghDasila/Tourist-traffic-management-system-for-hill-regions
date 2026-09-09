@@ -20,14 +20,15 @@ def upgrade() -> None:
     op.create_table('emergency_alerts',
         sa.Column('id', sa.UUID(), nullable=False),
         sa.Column('triggered_by', sa.UUID(), nullable=False),
-        sa.Column('alert_type', sa.String(length=30), nullable=False),
+        sa.Column('triggered_role', sa.String(length=20), nullable=False),
+        sa.Column('alert_type', sa.String(length=20), nullable=False),
         sa.Column('description', sa.String(length=300), nullable=True),
         sa.Column('lat', sa.Float(), nullable=False),
         sa.Column('lng', sa.Float(), nullable=False),
         sa.Column('district', sa.String(length=80), nullable=True),
         sa.Column('radius_km', sa.Float(), nullable=False),
         sa.Column('status', sa.String(length=20), nullable=False),
-        sa.Column('recipient_count', sa.Integer(), nullable=False),
+        sa.Column('recipients_notified', sa.Integer(), nullable=False),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
         sa.Column('resolved_at', sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint('id')
@@ -55,8 +56,7 @@ def upgrade() -> None:
         sa.Column('recipient_id', sa.String(length=100), nullable=False),
         sa.Column('channel', sa.String(length=20), nullable=False),
         sa.Column('delivery_status', sa.String(length=20), nullable=False),
-        sa.Column('delivered_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('error_message', sa.String(length=200), nullable=True),
+        sa.Column('sent_at', sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(['alert_id'], ['emergency_alerts.id']),
         sa.PrimaryKeyConstraint('id')
     )

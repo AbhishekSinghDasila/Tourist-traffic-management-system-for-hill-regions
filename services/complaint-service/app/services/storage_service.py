@@ -31,7 +31,7 @@ logger = logging.getLogger("complaint-service.storage")
 ALLOWED_MAGIC = {
     b"\xff\xd8\xff": "image/jpeg",    # JPEG
     b"\x89PNG":      "image/png",     # PNG
-    b"RIFF":         "image/webp",    # WebP (partial check)
+    b"RIFF":         "image/webp",    # WebP (RIFF container — needs WEBP fourcc check too)
 }
 
 
@@ -42,6 +42,10 @@ def _validate_image_type(data: bytes) -> Optional[str]:
     """
     for magic, media_type in ALLOWED_MAGIC.items():
         if data[:len(magic)] == magic:
+            if magic == b"RIFF" and data[8:12] != b"WEBP":
+                # RIFF is a generic container (also used by WAV/AVI/etc.) —
+                # only accept it if the fourcc confirms it's actually WebP.
+                continue
             return media_type
     return None
 
