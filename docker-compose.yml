@@ -51,7 +51,7 @@ services:
       ZOOKEEPER_INIT_LIMIT: 10
       ZOOKEEPER_SYNC_LIMIT: 5
     healthcheck:
-      test: ["CMD-SHELL", "cub zk-ready localhost 2181 10"]
+      test: ["CMD-SHELL", "cub zk-ready localhost:2181 5"]
       interval: 15s
       timeout: 10s
       retries: 10
