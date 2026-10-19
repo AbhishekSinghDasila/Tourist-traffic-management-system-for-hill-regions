@@ -1,10 +1,11 @@
+import { UserManagement } from './UserManagement'
 import { useEffect, useState, type FormEvent } from 'react'
 import { AppShell, PageHeader } from '../../components/layout/AppShell'
 import { Card, CardBody, CardHeader } from '../../components/ui/Card'
 import { Badge, statusTone } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
-import { ErrorBanner, InfoBanner } from '../../components/ui/ErrorBanner'
+import { ErrorBanner } from '../../components/ui/ErrorBanner'
 import { PageSpinner } from '../../components/ui/Spinner'
 import { ActiveAlertsList } from '../../components/alerts/ActiveAlertsList'
 import { AlertBroadcastForm } from '../../components/alerts/AlertBroadcastForm'
@@ -57,10 +58,7 @@ function ComplaintLookup() {
         <h2 className="font-semibold text-slate-900">Look up a complaint</h2>
       </CardHeader>
       <CardBody>
-        <InfoBanner
-          className="mb-4"
-          message="The backend has no bulk 'list all complaints' endpoint for admins — only GET /complaints/{id}/admin, which needs the exact complaint ID (e.g. shared by a police station handling the case). Enter one below."
-        />
+
         <form className="flex items-end gap-3" onSubmit={handleLookup}>
           <div className="flex-1">
             <Input
@@ -155,7 +153,8 @@ function AlertAdministration() {
   useEffect(load, [])
 
   async function handleCancel(alert: AlertPublic) {
-    const reason = window.prompt('Reason for cancelling this alert (optional):') ?? undefined
+    const reason = window.prompt('Reason for cancelling this alert (optional):')
+    if (reason === null) return
     try {
       const updated = await cancelAlert(alert.id, reason)
       setHistory((prev) => prev?.map((a) => (a.id === updated.id ? updated : a)) ?? null)
@@ -217,14 +216,12 @@ export default function AdminPanel() {
       <PageHeader title="Admin panel" subtitle="Complaint oversight and emergency alert administration" />
 
       <div className="flex flex-col gap-6">
+        <UserManagement />
         <ComplaintLookup />
         <AlertAdministration />
       </div>
 
-      <InfoBanner
-        className="mt-6"
-        message="A user/role management view was left out — the auth-service exposes no endpoint to list or manage users (only /register, /login, /refresh, /logout, /me). Adding one wasn't in scope for this frontend build."
-      />
+
     </AppShell>
   )
 }

@@ -10,7 +10,7 @@ import re
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from app.models.user import VALID_ROLES
 
@@ -18,12 +18,12 @@ PHONE_REGEX = re.compile(r"^\+?[0-9]{10,15}$")
 
 
 class UserRegister(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=120)
     phone: str
     email: Optional[EmailStr] = None
     password: str
     role: str = "tourist"
-    district: Optional[str] = None
+    district: Optional[str] = Field(default=None, max_length=80)
 
     @field_validator("phone")
     @classmethod
@@ -55,6 +55,17 @@ class UserRegister(BaseModel):
         # admin through a separate, protected endpoint — never self-service.
         if v not in ("tourist", "citizen"):
             raise ValueError("Self-registration is only allowed for 'tourist' or 'citizen' roles")
+        return v
+
+
+class AdminUserCreate(UserRegister):
+    station_id: Optional[str] = Field(default=None, max_length=80)
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        if v not in VALID_ROLES:
+            raise ValueError("Invalid account role")
         return v
 
 

@@ -8,14 +8,19 @@ RUN pip config set global.timeout 180 && \
 
 COPY requirements.txt .
 
-# EasyOCR downloads model weights on first use (~100MB).
-# torch is a heavy dependency — this stage takes 3-5 minutes.
-RUN pip install --no-cache-dir --user \
-    --index-url https://pypi.org/simple/ \
-    --trusted-host pypi.org \
-    --trusted-host pypi.python.org \
-    --trusted-host files.pythonhosted.org \
-    -r requirements.txt
+# CPU-only OCR avoids downloading CUDA runtime libraries.
+# INSTALL_OCR=false provides a lightweight integration-test build.
+ARG INSTALL_OCR=true
+RUN if [ "$INSTALL_OCR" = "true" ]; then \
+      pip install --no-cache-dir --user torch==2.5.1 torchvision==0.20.1 \
+        --index-url https://download.pytorch.org/whl/cpu; \
+    fi
+RUN if [ "$INSTALL_OCR" = "true" ]; then \
+      pip install --no-cache-dir --user -r requirements.txt; \
+    else \
+      sed '/^easyocr==/d; /^python-bidi==/d' requirements.txt > requirements-core.txt && \
+      pip install --no-cache-dir --user -r requirements-core.txt; \
+    fi
 
 # ---------- Final stage ----------
 FROM python:3.11-slim

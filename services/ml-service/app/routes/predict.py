@@ -5,12 +5,12 @@ GET  /api/v1/predict/crowd/{district}     predict crowd for a district today
 POST /api/v1/predict/crowd                predict with custom date/weather
 GET  /api/v1/predict/crowd/all            predict all districts (map overlay)
 GET  /api/v1/predict/model/info           model metadata and feature names
-POST /api/v1/predict/model/train          retrain model (admin-level, no auth for now)
+Retraining is available only through the operator CLI: python -m scripts.train_model
 """
 from datetime import datetime, timezone, date
 import calendar
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 
 from app.schemas.prediction import (
     PredictionRequest, PredictionResponse,
@@ -149,21 +149,3 @@ def get_model_info():
             "test_samples": 2000,
         }
     )
-
-
-@router.post("/model/train", status_code=202)
-def retrain_model(background_tasks: BackgroundTasks):
-    """
-    Retrain the model in the background.
-    Returns immediately with 202 Accepted — training runs async.
-    In production this would be protected by admin role.
-    """
-    def _train():
-        from app.services.predictor import train_and_save_model
-        metrics = train_and_save_model()
-        predictor.load()   # reload after training
-        import logging
-        logging.getLogger("ml-service").info(f"Model retrained: {metrics}")
-
-    background_tasks.add_task(_train)
-    return {"message": "Model training started in background. Call /model/info to check status."}

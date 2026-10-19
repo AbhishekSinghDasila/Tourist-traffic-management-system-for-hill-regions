@@ -1,0 +1,64 @@
+name: Validate
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+  backend:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth-service, traffic-service, complaint-service, alert-service, ml-service]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest tests -q
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose --env-file .env.example config --quiet
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install cryptography
+      - run: python scripts/setup.py
+      - name: Disable OCR model downloads for the integration smoke test
+        run: sed -i 's/USE_OCR=true/USE_OCR=false/' .env
+      - run: docker compose build --build-arg INSTALL_OCR=false
+      - run: docker compose run --rm --no-deps ml-service python -m scripts.train_model
+      - run: python scripts/start.py --skip-build
+      - run: python scripts/smoke_stack.py
+      - name: Diagnostic logs
+        if: failure()
+        run: docker compose logs --tail=100
+      - name: Stop isolated CI stack
+        if: always()
+        run: docker compose down

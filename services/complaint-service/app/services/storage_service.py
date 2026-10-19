@@ -50,7 +50,7 @@ def _validate_image_type(data: bytes) -> Optional[str]:
     return None
 
 
-def _get_s3_client():
+def _get_s3_client(public: bool = False):
     kwargs = {
         "region_name": settings.AWS_REGION,
     }
@@ -60,6 +60,8 @@ def _get_s3_client():
     if settings.S3_ENDPOINT_URL:
         kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL
 
+    if public and settings.S3_PUBLIC_ENDPOINT_URL:
+        kwargs["endpoint_url"] = settings.S3_PUBLIC_ENDPOINT_URL
     return boto3.client("s3", **kwargs)
 
 
@@ -116,7 +118,7 @@ def generate_presigned_url(s3_key: str, expiry_seconds: int = 300) -> str:
     Only called by admin endpoints. Never sent to police.
     """
     try:
-        client = _get_s3_client()
+        client = _get_s3_client(public=True)
         url = client.generate_presigned_url(
             "get_object",
             Params={"Bucket": settings.S3_BUCKET_NAME, "Key": s3_key},
