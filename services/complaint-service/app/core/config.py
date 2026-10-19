@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     # S3 / MinIO object storage for complaint images
     S3_BUCKET_NAME: str = "devbhumi-complaints"
     S3_ENDPOINT_URL: str = ""          # empty = real AWS; set for MinIO local
+    S3_PUBLIC_ENDPOINT_URL: str = ""
     AWS_REGION: str = "ap-south-1"
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""

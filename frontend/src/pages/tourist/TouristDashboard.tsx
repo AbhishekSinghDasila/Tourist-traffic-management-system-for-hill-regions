@@ -1,16 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Link } from 'react-router-dom'
 import { AppShell, PageHeader } from '../../components/layout/AppShell'
 import { Card, CardBody, CardHeader } from '../../components/ui/Card'
 import { Badge, riskTone } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import { ErrorBanner } from '../../components/ui/ErrorBanner'
 import { PageSpinner, Spinner } from '../../components/ui/Spinner'
-import { Select } from '../../components/ui/Input'
+import { Input, Select } from '../../components/ui/Input'
 import { DensityMap } from '../../components/map/DensityMap'
 import { ActiveAlertsList } from '../../components/alerts/ActiveAlertsList'
 import { fetchAllDensity } from '../../api/traffic'
-import { predictDistrictToday } from '../../api/predict'
+import { predictCustom } from '../../api/predict'
 import { fetchActiveAlerts, updateMyLocation } from '../../api/alerts'
 import { apiErrorMessage } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
@@ -27,6 +26,7 @@ export default function TouristDashboard() {
   const [loadingAlerts, setLoadingAlerts] = useState(true)
 
   const [predictDistrict, setPredictDistrict] = useState(user?.district ?? KNOWN_DISTRICTS[0])
+  const [targetDate, setTargetDate] = useState('')
   const [prediction, setPrediction] = useState<PredictionResponse | null>(null)
   const [predictError, setPredictError] = useState<string | null>(null)
   const [predicting, setPredicting] = useState(false)
@@ -66,15 +66,26 @@ export default function TouristDashboard() {
   }
 
   useEffect(() => {
-    fetchAllDensity()
-      .then(setDensity)
-      .catch((err) => setDensityError(apiErrorMessage(err, 'Could not load traffic density.')))
-      .finally(() => setLoadingDensity(false))
-
-    fetchActiveAlerts(user?.district ?? undefined)
-      .then(setAlerts)
-      .catch((err) => setAlertsError(apiErrorMessage(err, 'Could not load alerts.')))
-      .finally(() => setLoadingAlerts(false))
+    let active = true
+    let pending = false
+    async function refresh() {
+      if (pending) return
+      pending = true
+      await Promise.all([
+        fetchAllDensity()
+          .then(data => { if (active) { setDensity(data); setDensityError(null) } })
+          .catch(err => { if (active) setDensityError(apiErrorMessage(err, 'Could not load traffic density.')) })
+          .finally(() => { if (active) setLoadingDensity(false) }),
+        fetchActiveAlerts(user?.district ?? undefined)
+          .then(data => { if (active) { setAlerts(data); setAlertsError(null) } })
+          .catch(err => { if (active) setAlertsError(apiErrorMessage(err, 'Could not load alerts.')) })
+          .finally(() => { if (active) setLoadingAlerts(false) }),
+      ])
+      pending = false
+    }
+    void refresh()
+    const interval = window.setInterval(() => { void refresh() }, 30000)
+    return () => { active = false; window.clearInterval(interval) }
   }, [user?.district])
 
   async function handlePredict(e: FormEvent) {
@@ -82,7 +93,7 @@ export default function TouristDashboard() {
     setPredictError(null)
     setPredicting(true)
     try {
-      const res = await predictDistrictToday(predictDistrict)
+      const res = await predictCustom(predictDistrict, targetDate || undefined)
       setPrediction(res)
     } catch (err) {
       setPredictError(apiErrorMessage(err, 'Could not fetch prediction for this district.'))
@@ -129,10 +140,12 @@ export default function TouristDashboard() {
                     ))}
                   </Select>
                 </div>
+                <Input id="prediction-date" label="Travel date (optional)" type="date" value={targetDate} onChange={e => setTargetDate(e.target.value)} />
                 <Button type="submit" loading={predicting}>
-                  Check today&rsquo;s forecast
+                  Check forecast
                 </Button>
               </form>
+              <p className="mt-3 text-xs text-slate-500">Demonstration forecast trained on synthetic data. Live conditions and local guidance take priority.</p>
               {predictError && <ErrorBanner message={predictError} className="mt-3" />}
               {prediction && (
                 <div className="mt-4 flex items-center gap-4 rounded-lg bg-slate-50 p-4">
@@ -180,9 +193,7 @@ export default function TouristDashboard() {
                 Reckless driving, littering, or overcharging — let us know and it&rsquo;ll be routed to the nearest
                 police station.
               </p>
-              <Link to="/complaints/new" className="mt-3 inline-block">
-                <Button variant="outline">File a complaint</Button>
-              </Link>
+              <p className="mt-3 text-sm text-slate-500">Complaint submission currently requires a citizen account.</p>
             </CardBody>
           </Card>
         </div>

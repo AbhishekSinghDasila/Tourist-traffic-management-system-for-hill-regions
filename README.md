@@ -4,7 +4,7 @@ Microservices-based platform addressing tourist density, traffic congestion,
 and citizen safety in the hill regions of Uttarakhand and Himachal Pradesh.
 
 All five backend services, the Postgres/Redis/Kafka/MinIO infrastructure, the
-nginx API gateway, and the React frontend are implemented. This README covers
+nginx API gateway, and the React frontend are present. This README covers
 bringing the whole stack up from a clean clone.
 
 ---
@@ -13,8 +13,8 @@ bringing the whole stack up from a clean clone.
 
 | Service | Port (direct) | Routed through nginx at |
 |---|---|---|
-| PostgreSQL | 5432 | — |
-| Redis | 6379 | — |
+| PostgreSQL | 5432 (Docker network only) | — |
+| Redis | 6379 (Docker network only) | — |
 | Kafka + Zookeeper | 9092 (internal), 29092 (host) | — |
 | MinIO (S3-compatible storage) | 9000 (API), 9001 (console) | — |
 | Auth Service | 8001 | `/api/v1/auth/*` |
@@ -31,7 +31,27 @@ and routing all set up.
 
 ---
 
-## First-time setup
+## Automated local setup (recommended)
+
+Install Python 3.11 or later and Docker Desktop with Linux containers running.
+
+```bash
+python -m pip install cryptography
+python scripts/setup.py
+python scripts/start.py
+docker compose exec auth-service python -m scripts.create_admin
+```
+
+The setup preserves existing credentials, generates random development passwords
+and signing keys, builds the frontend inside Docker, migrates each database,
+seeds reference data, and waits for containers. Open http://localhost.
+Sign in as the bootstrap admin to create police, emergency, citizen, tourist,
+or additional admin accounts. Police accounts require a district.
+Infrastructure/debug ports bind only to localhost.
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for GitHub and live-server deployment.
+
+## Manual first-time setup
 
 ### 1. Copy the environment file
 ```bash
@@ -43,7 +63,7 @@ value — `POSTGRES_PASSWORD`, `AUTH_DB_PASSWORD`, `TRAFFIC_DB_PASSWORD`,
 `*_DATABASE_URL` embeds its matching `*_DB_PASSWORD` — keep them in sync.
 `.env` is gitignored — never commit it.
 
-> **If you're picking up this repo after August 2026**: an earlier version
+> **Credential history note**: an earlier version
 > of `database/seeds/init_db_users.sql` had a real password hardcoded in
 > plain text and committed to git. It's been replaced with an env-var-driven
 > script, but that old password is still in git history — treat it as
@@ -167,16 +187,11 @@ Interactive API docs per service (FastAPI auto-generated):
 
 ## Running tests
 
-Each backend service has its own unit test suite, run inside its own
-Dockerfile's Python version (3.11):
-```bash
-docker compose build auth-service && docker run --rm devbhumi-auth-service pytest tests/ -v
-# same pattern for traffic-service / complaint-service / alert-service / ml-service
-```
-(swap the image name — `docker compose build <service>` tags it as
-`<project>-<service>`; check with `docker images` if unsure.)
+GitHub Actions runs each service's unit tests under Python 3.11 and includes a
+separate full-stack integration job. Locally, create a virtual environment per
+service and install its requirements plus pytest as shown below.
 
-If Docker isn't available, each service's tests also run in a plain Python
+Each service's tests run in a plain Python
 3.11 venv with no external services required (Postgres/Redis/Kafka/S3 are
 all mocked at the unit level):
 ```bash
@@ -243,13 +258,11 @@ devbhumi/
   require an existing admin (bootstrap the first one via `create_admin.py`).
 - **Generic login errors**: wrong password and non-existent phone return an
   identical error — prevents account enumeration.
-- **Per-service restricted DB users**: each service (`auth_svc`,
-  `traffic_svc`, `complaint_svc`, `alert_svc`) has `SELECT/INSERT/UPDATE`
-  (never `DELETE`) on only the tables it owns — see
-  `database/seeds/grant_permissions.sql`. If one service's container is
-  fully compromised, its DB user can't touch any other service's data.
-  `audit_logs` is additionally INSERT/SELECT-only (no UPDATE) — append-only.
-- **Non-root Docker containers**: every service runs as `appuser` (uid 1001).
+- **Per-service database users**: services use distinct users and own their
+  migrated tables. This prevents ordinary cross-service table access, but table
+  owners retain privileges such as DELETE regardless of narrower GRANT statements.
+  Production least-privilege enforcement needs separate migration and runtime roles.
+- **Non-root Docker containers**: every Python service runs as `appuser` (uid 1001).
 - **Nginx edge**: rate limiting (5/min on auth, 20/min on anonymous
   complaint submission, 10/s general), security headers (CSP, X-Frame-Options,
   etc.), 10MB request body cap.
@@ -273,29 +286,23 @@ devbhumi/
 
 ---
 
-## Known limitations / what to verify next
+## Validation and remaining limitations
 
-This was built and reviewed without a working local Docker daemon (sandbox
-limitation — Docker Desktop's engine wouldn't start). Every service's unit
-test suite was run and passes in a version-matched local Python 3.11 venv
-instead, and `docker compose config` confirms the compose file itself is
-valid, but **a real `docker compose up` end-to-end run has not been done**.
-Before relying on this for a demo or thesis evaluation, run through the
-setup steps above once with Docker actually up, and:
+See [VALIDATION.md](VALIDATION.md) for this revision's executed checks.
+The ML model is trained on synthetic data; predictions are demonstrations,
+not validated traffic forecasts. Camera/toll inputs require real integrations.
+FCM delivery needs operator-provided Firebase credentials and client registration;
+the default notifier logs events. In-app alert polling works independently.
+OCR downloads model weights on first use.
 
-- Confirm all 5 services + nginx report healthy in `docker compose ps`.
-- Walk one full flow through the actual UI: register → login → view the
-  tourist density map → submit a complaint (as citizen/police/admin — see
-  note below) → broadcast + receive an emergency alert.
-- `ml-service`'s prediction pipeline (`predictor.py`) has no dedicated unit
-  tests (only schema/data-generator tests exist) — worth adding before
-  trusting it unattended.
+Tourist accounts currently cannot file complaints; use a citizen account.
+Complaint identity is hidden from police; admin identity access is audited.
+Database service users own their migrated tables, so grants alone do not remove
+owner privileges. Stronger production isolation requires separate migration
+owners and runtime database roles.
 
-One product-design note surfaced during the frontend build: complaint
-submission requires an authenticated `citizen`/`police`/`admin`/
-`emergency_team` account — **`tourist` accounts cannot file complaints** by
-current design (`POST /api/v1/complaints` explicitly excludes that role).
-"Anonymous" in this service means anonymous *to police* (their identity
-isn't shown in the police-facing view), not anonymous/no-login. If tourists
-should be able to report incidents too, that's a role-restriction change in
-`services/complaint-service/app/routes/complaint.py`, not a bug fix.
+Model retraining is operator-only:
+```bash
+docker compose exec ml-service python -m scripts.train_model
+docker compose restart ml-service
+```

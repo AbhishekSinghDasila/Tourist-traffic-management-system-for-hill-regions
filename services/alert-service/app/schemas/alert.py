@@ -9,8 +9,8 @@ from app.models.alert import ALERT_TYPES
 class AlertCreate(BaseModel):
     alert_type: str = "AMBULANCE"
     description: Optional[str] = None
-    lat: float
-    lng: float
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
     district: Optional[str] = None
     # validate_default=True: ensures the 0.5-10km cap below still applies even
     # if ALERT_RADIUS_KM is misconfigured outside that range (pydantic v2
@@ -35,8 +35,8 @@ class AlertPublic(BaseModel):
     id: UUID
     alert_type: str
     description: Optional[str]
-    lat: float
-    lng: float
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
     district: Optional[str]
     radius_km: float
     status: str
@@ -49,6 +49,6 @@ class AlertCancelRequest(BaseModel):
 
 
 class LocationUpdate(BaseModel):
-    lat: float
-    lng: float
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
     district: Optional[str] = None

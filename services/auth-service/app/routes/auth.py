@@ -10,14 +10,15 @@ Edge cases handled here, per the blueprint section 4.1:
 """
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Response, status
+from sqlalchemy.exc import IntegrityError
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import get_current_user, oauth2_scheme
+from app.core.deps import get_current_user, oauth2_scheme, require_role
 from app.core.security import (
     hash_password,
     verify_password,
@@ -28,7 +29,7 @@ from app.core.security import (
 )
 from app.models.user import User
 from app.repositories.postgres_user_repository import PostgresUserRepository
-from app.schemas.user import UserRegister, UserPublic, AccessTokenResponse
+from app.schemas.user import UserRegister, UserPublic, AccessTokenResponse, AdminUserCreate
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -39,6 +40,35 @@ router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 # to every other service's requests either.
 REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/v1/auth"
+
+
+@router.get("/users", response_model=list[UserPublic])
+def list_users(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    return db.query(User).order_by(User.created_at, User.id).offset(offset).limit(limit).all()
+
+
+@router.post("/users", response_model=UserPublic, status_code=201)
+def create_managed_user(
+    payload: AdminUserCreate,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_role("admin")),
+):
+    if payload.role == "police" and not payload.district:
+        raise HTTPException(422, detail="Police accounts require a district")
+    user = User(
+        **payload.model_dump(exclude={"password"}),
+        hashed_password=hash_password(payload.password),
+    )
+    try:
+        return PostgresUserRepository(db).create(user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, detail="An account with that phone or email already exists")
 
 
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -72,8 +102,11 @@ def register(payload: UserRegister, db: Session = Depends(get_db)):
         role=payload.role,
         district=payload.district,
     )
-    created = repo.create(user)
-    return created
+    try:
+        return repo.create(user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, detail="An account with that phone or email already exists")
 
 
 @router.post("/login", response_model=AccessTokenResponse)
